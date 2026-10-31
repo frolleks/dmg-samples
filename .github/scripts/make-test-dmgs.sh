@@ -202,7 +202,9 @@ build_master() {
   local master="$WORK/$slug.dmg" mnt="$WORK/mnt-$slug"
   mkdir -p "$mnt"
   step hdiutil create -size "$IMAGE_SIZE" -fs "$fs" -layout "$layout" \
-    -volname "damage-$slug" -format UDRW -o "$master" || return 1
+    -volname "damage-$slug" -type UDIF -o "$master" || return 1
+  # (-type UDIF gives a read/write UDIF image, i.e. UDRW. `create` only
+  # accepts -format together with -srcfolder or -srcdevice.)
   step hdiutil attach "$master" -nobrowse -noverify -noautoopen -mountpoint "$mnt" || return 1
   populate "$mnt" || { detach "$mnt"; return 1; }
   write_manifest "$mnt" "$OUT/$slug.manifest.tsv" || { echo "  step failed: write_manifest" >&2; detach "$mnt"; return 1; }
