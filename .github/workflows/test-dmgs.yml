@@ -1,0 +1,57 @@
+name: Generate test DMGs
+
+on:
+  workflow_dispatch:
+    inputs:
+      random_mb:
+        description: "Size of the incompressible file in each image (MiB)"
+        default: "12"
+  push:
+    paths:
+      - .github/workflows/test-dmgs.yml
+      - .github/scripts/make-test-dmgs.sh
+
+jobs:
+  generate:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Different macOS releases write slightly different images.
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate images
+        env:
+          RANDOM_MB: ${{ inputs.random_mb || '12' }}
+        run: /bin/bash .github/scripts/make-test-dmgs.sh "$RUNNER_TEMP/dmgs"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Test DMGs (${{ matrix.os }})"
+            echo '```'
+            column -t -s $'\t' "$RUNNER_TEMP/dmgs/INDEX.tsv" 2>/dev/null || echo "no index"
+            cat "$RUNNER_TEMP/dmgs/INDEX.tsv.meta" 2>/dev/null || true
+            echo '```'
+            if [ -s "$RUNNER_TEMP/dmgs/FAILED.txt" ]; then
+              echo "### Failed"
+              echo '```'
+              cat "$RUNNER_TEMP/dmgs/FAILED.txt"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-dmgs-${{ matrix.os }}
+          path: ${{ runner.temp }}/dmgs
+          if-no-files-found: error
+          # Images are already compressed; zipping them again only costs time.
+          compression-level: 0
+          retention-days: 30
