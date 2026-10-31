@@ -112,7 +112,8 @@ make_source_tree() {
   printf 'short compressible text, short compressible text\n' > "$SRC/text/small.txt"
   # Large compressible file: many UDIF chunks, and decmpfs data in the
   # resource fork when compressed.
-  yes 'a line of compressible text for chunk and decmpfs tests' | head -n 20000 > "$SRC/text/compressible.txt"
+  # (awk instead of `yes | head`: under pipefail, yes dies of SIGPIPE and aborts the script)
+  awk 'BEGIN { for (i = 0; i < 20000; i++) print "a line of compressible text for chunk and decmpfs tests" }' > "$SRC/text/compressible.txt"
 
   # Incompressible data: forces raw chunks inside compressed formats and
   # spans several segments in the segmented image.
