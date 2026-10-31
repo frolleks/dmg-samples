@@ -77,13 +77,26 @@ fail() {
   return 1
 }
 
+# step CMD...: run CMD, and on failure print the command and its output.
+step() {
+  local out
+  if out=$("$@" 2>&1); then
+    return 0
+  fi
+  {
+    printf '  step failed: %s\n' "$*"
+    printf '%s\n' "$out" | sed 's/^/    /'
+  } | tee -a "$FAILED" >&2
+  return 1
+}
+
 detach() {
   local i
   for i in 1 2 3 4 5; do
     hdiutil detach "$1" -quiet && return 0
     sleep 2
   done
-  hdiutil detach "$1" -force -quiet
+  step hdiutil detach "$1" -force
 }
 
 ext_for() {
@@ -146,14 +159,14 @@ make_source_tree() {
 # carry over from the host.
 populate() {
   local mnt="$1"
-  ditto "$SRC" "$mnt" || return 1
+  step ditto "$SRC" "$mnt" || return 1
   # HFS transparent compression (decmpfs). Works on HFS+ and APFS.
-  ditto --hfsCompression "$SRC/text" "$mnt/hfs-compressed" || return 1
+  step ditto --hfsCompression "$SRC/text" "$mnt/hfs-compressed" || return 1
   # Hard links created on the target volume itself.
   printf 'linked content\n' > "$mnt/linked.txt" || return 1
-  ln "$mnt/linked.txt" "$mnt/dir/hardlink-1" || return 1
-  ln "$mnt/linked.txt" "$mnt/dir/nested/hardlink-2" || return 1
-  touch "$mnt/.metadata_never_index" || return 1
+  step ln "$mnt/linked.txt" "$mnt/dir/hardlink-1" || return 1
+  step ln "$mnt/linked.txt" "$mnt/dir/nested/hardlink-2" || return 1
+  step touch "$mnt/.metadata_never_index" || return 1
 }
 
 # Tab-separated listing of everything under ROOT, used as the test oracle.
@@ -188,16 +201,17 @@ build_master() {
   local slug="$1" fs="$2" layout="$3"
   local master="$WORK/$slug.dmg" mnt="$WORK/mnt-$slug"
   mkdir -p "$mnt"
-  hdiutil create -size "$IMAGE_SIZE" -fs "$fs" -layout "$layout" \
-    -volname "damage-$slug" -format UDRW -o "$master" -quiet || return 1
-  hdiutil attach "$master" -nobrowse -noverify -noautoopen -mountpoint "$mnt" -quiet || return 1
+  step hdiutil create -size "$IMAGE_SIZE" -fs "$fs" -layout "$layout" \
+    -volname "damage-$slug" -format UDRW -o "$master" || return 1
+  step hdiutil attach "$master" -nobrowse -noverify -noautoopen -mountpoint "$mnt" || return 1
   populate "$mnt" || { detach "$mnt"; return 1; }
-  write_manifest "$mnt" "$OUT/$slug.manifest.tsv" || { detach "$mnt"; return 1; }
+  write_manifest "$mnt" "$OUT/$slug.manifest.tsv" || { echo "  step failed: write_manifest" >&2; detach "$mnt"; return 1; }
   detach "$mnt" || return 1
 
   # Byte-exact reference for the decoded disk.
   local raw="$WORK/$slug-raw.cdr"
-  hdiutil convert "$master" -format UDTO -o "$raw" -quiet || return 1
+  step hdiutil convert "$master" -format UDTO -o "$raw" || return 1
+  [ -f "$raw" ] || { echo "  step failed: UDTO output missing at $raw; got: $(ls "$WORK")" | tee -a "$FAILED" >&2; return 1; }
   printf '%s\t%s\t%s\n' "$slug" \
     "$(shasum -a 256 "$raw" | cut -d' ' -f1)" \
     "$(stat -f '%z' "$raw")" >> "$EXPECTED"
@@ -211,7 +225,7 @@ convert_one() {
   name="$slug-$fmt.$(ext_for "$fmt")"
   dest="$OUT/$name"
 
-  if hdiutil convert "$WORK/$slug.dmg" -format "$fmt" -o "$dest" -quiet; then
+  if step hdiutil convert "$WORK/$slug.dmg" -format "$fmt" -o "$dest"; then
     hdiutil imageinfo -plist "$dest" > "$dest.imageinfo.plist" 2>/dev/null || true
     case "$fmt" in
       UDTO|UDSP|UDSB) ;;  # not UDIF, nothing to checksum
@@ -268,7 +282,7 @@ fi
 if [ -f "$OUT/hfsj-gpt-UDZO.dmg" ]; then
   log "segmented image"
   mkdir -p "$OUT/segmented"
-  if hdiutil segment -segmentSize "$SEGMENT_SIZE" -o "$OUT/segmented/hfsj-gpt-UDZO-seg" "$OUT/hfsj-gpt-UDZO.dmg" -quiet; then
+  if step hdiutil segment -segmentSize "$SEGMENT_SIZE" -o "$OUT/segmented/hfsj-gpt-UDZO-seg" "$OUT/hfsj-gpt-UDZO.dmg"; then
     printf 'segmented/hfsj-gpt-UDZO-seg.dmg\thfsj-gpt\tJournaled HFS+\tGPTSPUD\tUDZO segmented\tok\t-\n' >> "$INDEX"
   else
     fail segment "segment hfsj-gpt-UDZO.dmg" || true
